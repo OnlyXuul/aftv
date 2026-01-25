@@ -3,6 +3,9 @@ package aftv
 import "core:os/os2"
 import "core:net"
 import "core:time"
+//	core/flags/errors_nonbsd.odin conains duplicate definition
+//	of Unified_Parse_Error_Reason also found in errors.odin
+//	Delete or comment out errors_nonbsd.odin
 import "core:flags"
 import "core:bytes"
 import "core:strconv"
@@ -23,16 +26,11 @@ to_bytes :: proc(s: string) -> ([]byte) {
 	return transmute([]byte)(s)
 }
 
-exec :: proc(command: []string, allocator := context.allocator) -> (stdout: []byte) {
-	state:  os2.Process_State
-	error:  os2.Error
-	stderr: []byte
+exec :: proc(command: []string, allocator := context.allocator) -> []byte {
 	desc := os2.Process_Desc {command = command}
-	state, stdout, stderr, error = os2.process_exec(desc, allocator)
+	state, stdout, stderr, error := os2.process_exec(desc, allocator)
 	stdout = bytes.trim_right(stdout, {'\n'})
 	stderr = bytes.trim_right(stderr, {'\n'})
-
-	// print errors if they exist
 	if len(stderr) != 0 {
 		afmt.printfln("%s", warning, stderr)
 	}
@@ -40,7 +38,7 @@ exec :: proc(command: []string, allocator := context.allocator) -> (stdout: []by
 		afmt.printfln("%s: %s", error, desc.command[0], os2.error_string(error))
 	}
 	delete(stderr)
-	return
+	return stdout
 }
 
 connect :: proc(connect: net.Host_Or_Endpoint) -> (success: bool) {
@@ -70,18 +68,43 @@ disconnect :: proc() {
 	delete(stdout)
 }
 
+shell :: proc(allocator := context.allocator) {
+	desc := os2.Process_Desc {
+		command = {"adb", "shell"},
+		stderr  = os2.stderr,
+		stdout  = os2.stdout,
+		stdin   = os2.stdin,
+	}
+
+	desc.env = os2.environ(allocator) or_else nil
+
+	afmt.print("\e[38;2;255;216;1m")
+	if process, perr := os2.process_start(desc); perr != nil {
+		afmt.println(error, "Process start:", perr)
+	} else {
+		if state, serr := os2.process_wait(process); serr != nil {
+			afmt.println(error, "Process wait:", serr, state)
+		}
+		if cerr := os2.process_close(process); cerr != nil {
+			afmt.println(error, "Process close:", cerr)
+		}
+	}
+	afmt.print("\e[0m")
+}
+
 Args :: struct {
 	connect:    net.Host_Or_Endpoint `args:"name=c,pos=0,required" usage:"Default port is 5555."`,
+	clearcache: string `args:"name=cc" usage:"Clear cache of specified package."`,
+	cleardata:  string `args:"name=cd" usage:"Clear data of specified package."`,
 	dumpsys:    string `args:"name=d" usage:"Device dumpsys info. Quote commands containing spaces."`,
 	event:      string `args:"name=e" usage:"Execute event KEYCODE. Quote commands containing spaces."`,
 	kill:       string `args:"name=k" usage:"Kill package name or 'all' (3rd Party) packages."`,
 	launch:     string `args:"name=l" usage:"Launch package."`,
 	memory:     string `args:"name=m" usage:"Memory usage of specified package."`,
 	packages:   string `args:"name=p" usage:"Packages installed as either 'user' or 'system'."`,
-	space:      string `args:"name=s" usage:"Space usage for either 'system' or specified package name."`,
-	clearcache: string `args:"name=cc" usage:"Clear cache of specified package."`,
-	cleardata:  string `args:"name=cd" usage:"Clear data of specified package."`,
 	running:    bool   `args:"name=r" usage:"Running 3rd party applications."`,
+	usage:      string `args:"name=u" usage:"Disk usage for either 'system' or specified package name."`,
+	shell:      bool   `args:"name=s" usage:"Enter adb shell`,
 	version:    bool   `args:"name=v" usage:"Version information."`,
 }
 
@@ -99,7 +122,8 @@ print_usage :: proc() {
   	{"-m:<string>"        , "Memory usage of specified package."},
   	{"-p:<string>"        , "Packages installed as either 'user' or 'system'."},
   	{"-r"                 , "Running 3rd party applications."},
-  	{"-s:<string>"        , "Space usage for either 'system' or specified package name."},
+		{"-s"                 , "Enter adb shell."},
+  	{"-u:<string>"        , "Disk usage for either 'system' or specified package name."},
   	{"-v"                 , "Version information."},
 	}
 	row := [2]Column(ANSI24) {{20, .LEFT, {fg = orange}},	{60, .LEFT, {fg = crimson}}}
@@ -111,7 +135,7 @@ print_usage :: proc() {
 	for f in flags { printrow(row, f[:]) }
 }
 
-parse_args :: proc(args: ^Args) ->(ok: bool) {
+parse_args :: proc(args: ^Args) -> (ok: bool) {
 	#partial switch err in flags.parse(args, os2.args[1:]) {
 	case flags.Help_Request:
 		print_usage()
@@ -127,8 +151,8 @@ parse_args :: proc(args: ^Args) ->(ok: bool) {
 main :: proc() {
 	using afmt
 
-	args:  Args
-	varena: virtual.Arena
+	args: Args
+	varena:  virtual.Arena
 	arena := virtual.arena_allocator(&varena)
 
 	if parse_args(&args) && connect(args.connect) {
@@ -218,12 +242,17 @@ main :: proc() {
 			}
 		}
 
-		if args.space == "system" {
+		if args.shell {
+			println(ANSI24{fg = RGB{249, 86, 2}}, "Starting ADB shell ...")
+			shell(arena)
+		}
+
+		if args.usage == "system" {
 			diskstats := exec({"adb", "shell", "dumpsys", "diskstats"}, arena)
-			print_system_stats(diskstats, arena)
-		} else if args.space != "" {
+			print_system_disk_stats(diskstats, arena)
+		} else if args.usage != "" {
 			diskstats := exec({"adb", "shell", "dumpsys", "diskstats"}, arena)
-			print_package_usage(diskstats, args.space, arena)
+			print_package_usage(diskstats, args.usage, arena)
 		}
 
 		if args.version {
@@ -243,7 +272,7 @@ main :: proc() {
 	}
 }
 
-print_system_stats :: proc(diskstats: []byte, allocator := context.allocator) {
+print_system_disk_stats :: proc(diskstats: []byte, allocator := context.allocator) {
 	lines := bytes.split(diskstats, {'\n'}, allocator)
 	for line, idx in lines {
 		switch idx {
