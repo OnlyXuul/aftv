@@ -27,38 +27,40 @@ to_bytes :: proc(s: string) -> ([]byte) {
 }
 
 exec :: proc(command: []string, allocator := context.allocator) -> []byte {
+	using afmt, bytes
 	desc := os2.Process_Desc {command = command}
 	state, stdout, stderr, error := os2.process_exec(desc, allocator)
-	stdout = bytes.trim_right(stdout, {'\n'})
-	stderr = bytes.trim_right(stderr, {'\n'})
+	stdout = trim_right(stdout, {'\n'})
+	stderr = trim_right(stderr, {'\n'})
 	if len(stderr) != 0 {
-		afmt.printfln("%s", warning, stderr)
+		printfln("%s", warning, stderr)
 	}
 	if !state.success {
-		afmt.printfln("%s: %s", error, desc.command[0], os2.error_string(error))
+		printfln("%s: %s", error, desc.command[0], os2.error_string(error))
 	}
-	delete(stderr)
+	if allocator == context.allocator { delete(stderr) }
 	return stdout
 }
 
 connect :: proc(connect: net.Host_Or_Endpoint) -> (success: bool) {
+	using afmt, bytes, net
 	connection: string
 	switch c in connect {
-	case net.Host:
-		connection = afmt.tprintf("%v%v%v", c.hostname, ":", c.port == 0 ? 5555 : c.port)
-	case net.Endpoint:
-		connection = afmt.tprintf("%v%v%v", net.address_to_string(c.address), ":", c.port == 0 ? 5555 : c.port)
+	case Host:
+		connection = tprintf("%v%v%v", c.hostname, ":", c.port == 0 ? 5555 : c.port)
+	case Endpoint:
+		connection = tprintf("%v%v%v", address_to_string(c.address), ":", c.port == 0 ? 5555 : c.port)
 	}
 
 	stdout := exec({"adb", "connect",  connection})
 	defer delete(stdout)
 
-	if bytes.contains(stdout, to_bytes("connected")) {
-		afmt.printfln("%s", status, stdout)
+	if contains(stdout, to_bytes("connected")) {
+		printfln("%s", status, stdout)
 		return true
 	}
 
-	afmt.printfln("%s", error, stdout)
+	printfln("%s", error, stdout)
 	return false
 }
 
@@ -68,28 +70,29 @@ disconnect :: proc() {
 	delete(stdout)
 }
 
-shell :: proc(allocator := context.allocator) {
-	desc := os2.Process_Desc {
+shell :: proc(allocator: runtime.Allocator) {
+	using afmt, os2
+	desc := Process_Desc {
 		command = {"adb", "shell"},
-		stderr  = os2.stderr,
-		stdout  = os2.stdout,
-		stdin   = os2.stdin,
+		stderr  = stderr,
+		stdout  = stdout,
+		stdin   = stdin,
 	}
 
-	desc.env = os2.environ(allocator) or_else nil
+	desc.env = environ(allocator) or_else nil
 
-	afmt.print("\e[38;2;255;216;1m")
-	if process, perr := os2.process_start(desc); perr != nil {
-		afmt.println(error, "Process start:", perr)
+	print("\e[38;2;255;216;1m")
+	if process, p_err := process_start(desc); p_err != nil {
+		println(error, "Process start:", p_err)
 	} else {
-		if state, serr := os2.process_wait(process); serr != nil {
-			afmt.println(error, "Process wait:", serr, state)
+		if _, w_err := process_wait(process); w_err != nil {
+			println(error, "Process wait:", w_err)
 		}
-		if cerr := os2.process_close(process); cerr != nil {
-			afmt.println(error, "Process close:", cerr)
+		if c_err := process_close(process); c_err != nil {
+			println(error, "Process close:", c_err)
 		}
 	}
-	afmt.print("\e[0m")
+	print("\e[0m")
 }
 
 Args :: struct {
@@ -108,7 +111,7 @@ Args :: struct {
 	version:    bool   `args:"name=v" usage:"Version information."`,
 }
 
-print_usage :: proc() {
+usage :: proc() {
 	using afmt, time
 	usage := "./aftv c [-cc] [-cd] [-d] [-e] [-k] [-l] [-m] [-p] [-r] [-s] [-v]"
 	flags := [][]string {
@@ -135,27 +138,24 @@ print_usage :: proc() {
 	for f in flags { printrow(row, f[:]) }
 }
 
-parse_args :: proc(args: ^Args) -> (ok: bool) {
-	#partial switch err in flags.parse(args, os2.args[1:]) {
-	case flags.Help_Request:
-		print_usage()
-		return false
-	case flags.Validation_Error:
-		afmt.printfln("%v", error, err)
-		print_usage()
-		return false
+parse :: proc(args: ^Args) -> (ok: bool) {
+	using afmt, flags
+	#partial switch err in parse(args, os2.args[1:]) {
+	case Help_Request:     usage()
+	case Validation_Error: printfln("%v", error, err); usage()
+	case: ok = true
 	}
-	return true
+	return
 }
 
 main :: proc() {
-	using afmt
+	using afmt, bytes
 
 	args: Args
-	varena:  virtual.Arena
-	arena := virtual.arena_allocator(&varena)
+	virt: virtual.Arena
+	arena := virtual.arena_allocator(&virt)
 
-	if parse_args(&args) && connect(args.connect) {
+	if parse(&args) && connect(args.connect) {
 
 		if args.clearcache != "" {
 			printfln("%s %s", notes, "Attempting to clear cache of:", args.clearcache)
@@ -190,10 +190,10 @@ main :: proc() {
 		if args.kill == "all" {
 			packages := exec({"adb", "shell", "pm", "list", "packages", "-3"}, arena)
 			running  := exec({"adb", "shell", "ps", "-o", "ARGS=CMD"}, arena)
-			list1, _ := bytes.remove_all(packages, to_bytes("package:"), arena)
-			list2    := bytes.split(running, {'\n'}, arena)
+			list1, _ := remove_all(packages, to_bytes("package:"), arena)
+			list2    := split(running, {'\n'}, arena)
 			for e in list2 {
-				if !bytes.contains(e, to_bytes("com.amazon.tv")) && bytes.contains(list1, e) {
+				if !contains(e, to_bytes("com.amazon.tv")) && contains(list1, e) {
 					printfln("%s %s", notes, "Killing:", e)
 					dead := exec({"adb", "shell", "am", "force-stop", string(e)}, arena)
 				}
@@ -205,7 +205,7 @@ main :: proc() {
 
 		if args.memory != "" {
 			usage := exec({"adb", "shell", "dumpsys", "meminfo", args.memory}, arena)
-			if bytes.contains(usage, to_bytes("No process found")) {
+			if contains(usage, to_bytes("No process found")) {
 				printfln("%s", warning, usage)
 			} else {
 				printfln("%s %s", title, "Memory Usage:", args.memory)
@@ -216,15 +216,15 @@ main :: proc() {
 		switch args.packages {
 		case "user":
 			packages := exec({"adb", "shell", "pm", "list", "packages", "-3"}, arena)
-			list1, _ := bytes.remove_all(packages, to_bytes("package:"), arena)
-			list2    := bytes.split(list1, {'\n'}, arena)
+			list1, _ := remove_all(packages, to_bytes("package:"), arena)
+			list2    := split(list1, {'\n'}, arena)
 			printfln("%s", title, "User Installed (3rd Party) Packages:")
 			for e in list2 {
-				if !bytes.contains(e, to_bytes("com.amazon.tv")) { printfln("%s", data, e) }
+				if !contains(e, to_bytes("com.amazon.tv")) { printfln("%s", data, e) }
 			}
 		case "system":
 			packages := exec({"adb", "shell", "pm", "list", "packages", "-s"}, arena)
-			list, _  := bytes.remove_all(packages, to_bytes("package:"), arena)
+			list, _  := remove_all(packages, to_bytes("package:"), arena)
 			printfln("%s", title, "System Installed (FireOS) Packages:")
 			printfln("%s", data, list)
 		}
@@ -232,11 +232,11 @@ main :: proc() {
 		if args.running {
 			packages := exec({"adb", "shell", "pm", "list", "packages", "-3"}, arena)
 			running  := exec({"adb", "shell", "ps", "-o", "ARGS=CMD"}, arena)
-			list1, _ := bytes.remove_all(packages, to_bytes("package:"), arena)
-			list2    := bytes.split(running, {'\n'}, arena)
+			list1, _ := remove_all(packages, to_bytes("package:"), arena)
+			list2    := split(running, {'\n'}, arena)
 			printfln("%s", title, "Running User Installed (3rd Party) Packages:")
 			for e in list2 {
-				if !bytes.contains(e, to_bytes("com.amazon.tv")) && bytes.contains(list1, e) {
+				if !contains(e, to_bytes("com.amazon.tv")) && contains(list1, e) {
 					printfln("%s", data, e)
 				}
 			}
@@ -249,7 +249,7 @@ main :: proc() {
 
 		if args.usage == "system" {
 			diskstats := exec({"adb", "shell", "dumpsys", "diskstats"}, arena)
-			print_system_disk_stats(diskstats, arena)
+			print_system_usage(diskstats, arena)
 		} else if args.usage != "" {
 			diskstats := exec({"adb", "shell", "dumpsys", "diskstats"}, arena)
 			print_package_usage(diskstats, args.usage, arena)
@@ -267,84 +267,84 @@ main :: proc() {
 			printrow(row, "Serial No:", string(serial))
 		}
 
-		virtual.arena_destroy(&varena)
+		virtual.arena_destroy(&virt)
 		disconnect()
 	}
 }
 
-print_system_disk_stats :: proc(diskstats: []byte, allocator := context.allocator) {
+print_system_usage :: proc(diskstats: []byte, allocator: runtime.Allocator) {
 	lines := bytes.split(diskstats, {'\n'}, allocator)
 	for line, idx in lines {
 		switch idx {
-		case 00..=01: print_speed_metrics(line, idx)
-		case 02..=04: print_system_usage(line, idx, allocator)
-		case 05..=13: print_categorical_usage(line, idx, allocator)
+		case 00..=01: print_disk_speed(line, idx)
+		case 02..=04: print_disk_usage(line, idx, allocator)
+		case 05..=13: print_group_usage(line, idx, allocator)
 		case: break
 		}
 	}
-}
 
-print_speed_metrics :: proc(line: []byte, index: int) {
-	using afmt
-	title := [2]Column(ANSI24) {{17, .LEFT, title}, {63, .LEFT, title}}
-	row   := [2]Column(ANSI24) {{17, .LEFT, label}, {63, .LEFT, data}}
-	if index == 0 {
-		printrow(title, "Speed", "Disk Metrics")
-		printrow(row, "Latency:", string(line[len("Latency: "):]))
-	} else if index == 1 {
-		printrow(row, "Write:", tprint(string(line[len("Recent Disk Write Speed (kB/s) = "):]), "kB/s"))
-	}
-}
-
-print_system_usage :: proc(line: []byte, index: int, allocator := context.allocator) {
-	using afmt
-	title := [2]Column(ANSI24) {{17, .LEFT, title}, {63, .LEFT, title}}
-	row := [10]Column(ANSI24) {
-		{17, .LEFT,  label}, {10, .RIGHT, data}, {10, .RIGHT, data}, {03, .RIGHT, data}, {12, .RIGHT, data},
-		{11, .RIGHT, data }, {06, .RIGHT, data}, {02, .RIGHT, data}, {04, .RIGHT, data}, {05, .RIGHT, data},
-	}
-	split := bytes.split(line, {' '}, allocator)
-	data  := make([dynamic]string, allocator = allocator)
-	for s in split {
-		if len(s) > 0 && s[len(s)-1] == 'K' {
-			if num, num_ok := strconv.parse_f64(string(s[:len(s)-1])); num_ok {
-				append(&data, tprintf("%.2f%s", num / 1024, "MB"))
-				append(&data, tprintf("%s%.2f%s", "(", num / 1048576, "GB)"))
-			}
-		}	else {
-			append(&data, string(s))
+	print_disk_speed :: proc(line: []byte, index: int) {
+		using afmt
+		title := [2]Column(ANSI24) {{17, .LEFT, title}, {63, .LEFT, title}}
+		row   := [2]Column(ANSI24) {{17, .LEFT, label}, {63, .LEFT, data}}
+		if index == 0 {
+			printrow(title, "Speed", "Disk Metrics")
+			printrow(row, "Latency:", string(line[len("Latency: "):]))
+		} else if index == 1 {
+			printrow(row, "Write:", tprint(string(line[len("Recent Disk Write Speed (kB/s) = "):]), "kB/s"))
 		}
 	}
-	if index == 2 {
-		printrow(title, "System", "Disk Usage")
+
+	print_disk_usage :: proc(line: []byte, index: int, allocator: runtime.Allocator) {
+		using afmt
+		title := [2]Column(ANSI24) {{17, .LEFT, title}, {63, .LEFT, title}}
+		row := [10]Column(ANSI24) {
+			{17, .LEFT,  label}, {10, .RIGHT, data}, {10, .RIGHT, data}, {03, .RIGHT, data}, {12, .RIGHT, data},
+			{11, .RIGHT, data }, {06, .RIGHT, data}, {02, .RIGHT, data}, {04, .RIGHT, data}, {05, .RIGHT, data},
+		}
+		split := bytes.split(line, {' '}, allocator)
+		data  := make([dynamic]string, allocator = allocator)
+		for s in split {
+			if len(s) > 0 && s[len(s)-1] == 'K' {
+				if num, num_ok := strconv.parse_f64(string(s[:len(s)-1])); num_ok {
+					append(&data, tprintf("%.2f%s", num / 1024, "MB"))
+					append(&data, tprintf("%s%.2f%s", "(", num / 1048576, "GB)"))
+				}
+			}	else {
+				append(&data, string(s))
+			}
+		}
+		if index == 2 {
+			printrow(title, "System", "Disk Usage")
+		}
+		if len(data) >= 10 {
+			printrow(row, data[:])
+		}
 	}
-	if len(data) >= 10 {
+
+	print_group_usage :: proc (line: []byte, index: int, allocator: runtime.Allocator) {
+		using afmt
+		title := [2]Column(ANSI24) {{17, .LEFT, title}, {63, .LEFT, title}}
+		row   := [3]Column(ANSI24) {{17, .LEFT, label}, {10, .RIGHT, data}, {10, .RIGHT, data}}
+		split := bytes.split(line, {':', ' '}, allocator)
+		data  := make([dynamic]string, 3, allocator = allocator)
+		if num, num_ok := strconv.parse_f64(string(split[1])); num_ok {
+			data[0] = tprintf("%s%s", split[0], ":")
+			data[1] = tprintf("%.2f%s", num / 1048576, "MB")
+			data[2] = tprintf("%s%.2f%s", "(", num / 1048576 / 1024, "GB)")
+		}
+		if index == 5 {
+			printrow(title, "Categorical", "Disk Usage")
+		}
 		printrow(row, data[:])
 	}
 }
 
-print_categorical_usage :: proc (line: []byte, index: int, allocator := context.allocator) {
-	using afmt
-	title := [2]Column(ANSI24) {{17, .LEFT, title}, {63, .LEFT, title}}
-	row   := [3]Column(ANSI24) {{17, .LEFT, label}, {10, .RIGHT, data}, {10, .RIGHT, data}}
-	split := bytes.split(line, {':', ' '}, allocator)
-	data  := make([dynamic]string, 3, allocator = allocator)
-	if num, num_ok := strconv.parse_f64(string(split[1])); num_ok {
-		data[0] = tprintf("%s%s", split[0], ":")
-		data[1] = tprintf("%.2f%s", num / 1048576, "MB")
-		data[2] = tprintf("%s%.2f%s", "(", num / 1048576 / 1024, "GB)")
-	}
-	if index == 5 {
-		printrow(title, "Categorical", "Disk Usage")
-	}
-	printrow(row, data[:])
-}
-
-print_package_usage :: proc (diskstats: []byte, pkg: string, allocator := context.allocator) {
-	using afmt
+print_package_usage :: proc (diskstats: []byte, pkg: string, allocator: runtime.Allocator) {
+	using afmt, bytes, strconv
 	title := [2]Column(ANSI24) {{17, .LEFT, title}, {20, .LEFT, title}}
 	row   := [3]Column(ANSI24) {{17, .LEFT, label}, {10, .RIGHT, data}, {10, .RIGHT, data}}
-	lines := bytes.split(diskstats, {'\n'}, allocator)
+	lines := split(diskstats, {'\n'}, allocator)
 
 	app_index := -1
 	app_size:   f64
@@ -357,27 +357,27 @@ print_package_usage :: proc (diskstats: []byte, pkg: string, allocator := contex
 	cache_sizes: [][]byte
 
 	for line in lines {
-		if bytes.contains(line, to_bytes("Package Names: ")) {
-			packages = bytes.split(line[len("Package Names: "):], {','}, allocator)
+		if contains(line, to_bytes("Package Names: ")) {
+			packages = split(line[len("Package Names: "):], {','}, allocator)
 			for p, i in packages {
-				if bytes.contains(p, to_bytes(pkg)) { app_index = i }
+				if contains(p, to_bytes(pkg)) { app_index = i }
 			}
 		}
-		if bytes.contains(line, to_bytes("App Sizes: ")) {
-			app_sizes = bytes.split(line[len("App Sizes: "):], {','}, allocator)
+		if contains(line, to_bytes("App Sizes: ")) {
+			app_sizes = split(line[len("App Sizes: "):], {','}, allocator)
 		}
-		if bytes.contains(line, to_bytes("App Data Sizes: ")) {
-			data_sizes = bytes.split(line[len("App Data Sizes: "):], {','}, allocator)
+		if contains(line, to_bytes("App Data Sizes: ")) {
+			data_sizes = split(line[len("App Data Sizes: "):], {','}, allocator)
 		}
-		if bytes.contains(line, to_bytes("Cache Sizes: ")) {
-			cache_sizes = bytes.split(line[len("Cache Sizes: "):], {','}, allocator)
+		if contains(line, to_bytes("Cache Sizes: ")) {
+			cache_sizes = split(line[len("Cache Sizes: "):], {','}, allocator)
 		}
 	}
 
 	if app_index > 0 {
-		app_size, _   = strconv.parse_f64(string(app_sizes[app_index][:]))
-		data_size, _  = strconv.parse_f64(string(data_sizes[app_index][:]))
-		cache_size, _ = strconv.parse_f64(string(cache_sizes[app_index][:]))
+		app_size, _   = parse_f64(string(app_sizes[app_index][:]))
+		data_size, _  = parse_f64(string(data_sizes[app_index][:]))
+		cache_size, _ = parse_f64(string(cache_sizes[app_index][:]))
 	}
 
 	app_mb   := tprintf("%.2f%s", app_size / 1048576, "MB")
