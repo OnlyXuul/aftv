@@ -3,9 +3,6 @@ package aftv
 import "core:os/os2"
 import "core:net"
 import "core:time"
-//	core/flags/errors_nonbsd.odin conains duplicate definition
-//	of Unified_Parse_Error_Reason also found in errors.odin
-//	Delete or comment out errors_nonbsd.odin
 import "core:flags"
 import "core:bytes"
 import "core:strconv"
@@ -13,6 +10,8 @@ import "base:runtime"
 import "core:mem/virtual"
 
 import "shared:afmt"
+
+PACKAGE :: ODIN_BUILD_PROJECT_NAME
 
 status  :: afmt.ANSI24{fg = afmt.darkseagreen}
 warning :: afmt.ANSI24{fg = afmt.khaki}
@@ -94,21 +93,27 @@ Args :: struct {
 	connect:    net.Host_Or_Endpoint `args:"name=c,pos=0,required" usage:"Default port is 5555."`,
 	clearcache: string `args:"name=cc" usage:"Clear cache of specified package."`,
 	cleardata:  string `args:"name=cd" usage:"Clear data of specified package."`,
-	dumpsys:    string `args:"name=d" usage:"Device dumpsys info. Quote commands containing spaces."`,
-	event:      string `args:"name=e" usage:"Execute event KEYCODE. Quote commands containing spaces."`,
-	kill:       string `args:"name=k" usage:"Kill package name or 'all' (3rd Party) packages."`,
-	launch:     string `args:"name=l" usage:"Launch package."`,
-	memory:     string `args:"name=m" usage:"Memory usage of 'system' or specified package."`,
-	packages:   string `args:"name=p" usage:"Packages installed as either 'user' or 'system'."`,
-	running:    bool   `args:"name=r" usage:"Running 3rd party applications."`,
-	usage:      string `args:"name=u" usage:"Disk usage of 'system' or specified package name."`,
-	shell:      bool   `args:"name=s" usage:"Enter adb shell`,
-	version:    bool   `args:"name=v" usage:"Version information."`,
+	dumpsys:    string `args:"name=d"  usage:"Device dumpsys info. Quote commands containing spaces."`,
+	event:      string `args:"name=e"  usage:"Execute event KEYCODE. Quote commands containing spaces."`,
+	kill:       string `args:"name=k"  usage:"Kill package name or 'all' (3rd Party) packages."`,
+	launch:     string `args:"name=l"  usage:"Launch package."`,
+	memory:     string `args:"name=m"  usage:"Memory usage of 'system' or specified package."`,
+	packages:   string `args:"name=p"  usage:"Packages installed as either 'user' or 'system'."`,
+	running:    bool   `args:"name=r"  usage:"Running 3rd party applications."`,
+	usage:      string `args:"name=u"  usage:"Disk usage of 'system' or specified package name."`,
+	shell:      bool   `args:"name=s"  usage:"Enter adb shell`,
+	version:    bool   `args:"name=v"  usage:"Version information."`,
 }
 
 usage :: proc() {
-	usage := "./aftv c [-cc] [-cd] [-d] [-e] [-k] [-l] [-m] [-p] [-r] [-s] [-v]"
-	flags := [][]string {
+	buf: [time.MIN_YYYY_DATE_LEN]u8
+	usage := [][]string {
+		{PACKAGE + " by:", "xuul the terror dog"},
+		{"Compile Date:",  time.to_string_yyyy_mm_dd(time.now(), buf[:])},
+		{"Odin Version:",  ODIN_VERSION},
+		{"",""},
+		{"Usage:", "./aftv c [-cc] [-cd] [-d] [-e] [-k] [-l] [-m] [-p] [-r] [-s] [-v]"},
+		{"",""},
 		{"-c:<host>, required", "Default port is 5555."},
 		{"-cc:<string>"       , "Clear cache of specified package."},
 		{"-cd:<string>"       , "Clear data of specified package."},
@@ -127,12 +132,7 @@ usage :: proc() {
 		{20, .LEFT, {fg = afmt.orange}},
 		{60, .LEFT, {fg = afmt.crimson}},
 	}
-	buf: [time.MIN_YYYY_DATE_LEN]u8
-	afmt.printrow(row, ODIN_BUILD_PROJECT_NAME + " by:", "xuul the terror dog")
-	afmt.printrow(row, "Compile Date:", time.to_string_yyyy_mm_dd(time.now(), buf[:]))
-	afmt.printrow(row, "Odin Version:", ODIN_VERSION); afmt.println()
-	afmt.printrow(row, "Usage:", usage);	afmt.println()
-	for f in flags { afmt.printrow(row, f[:]) }
+	for u in usage { afmt.printrow(row, u[:]) }
 }
 
 parse :: proc(args: ^Args) -> (ok: bool) {
