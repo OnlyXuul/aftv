@@ -7,19 +7,23 @@ import "core:flags"
 import "core:bytes"
 import "core:strconv"
 import "base:runtime"
+import "core:reflect"
 import "core:mem/virtual"
 
 import "shared:afmt"
 
 PACKAGE :: ODIN_BUILD_PROJECT_NAME
 
-status  :: afmt.ANSI24{fg = afmt.darkseagreen}
-warning :: afmt.ANSI24{fg = afmt.khaki}
-error   :: afmt.ANSI24{fg = afmt.indianred}
-title   :: afmt.ANSI24{fg = afmt.black, bg = afmt.cornflowerblue, at = {.BOLD}}
-data    :: afmt.ANSI24{fg = afmt.cornflowerblue}
-label   :: afmt.ANSI24{fg = afmt.orchid}
-notes   :: afmt.ANSI24{fg = afmt.cornflowerblue, at = {.ITALIC}}
+status  := afmt.ANSI24{fg = afmt.darkseagreen}
+warning := afmt.ANSI24{fg = afmt.khaki}
+error   := afmt.ANSI24{fg = afmt.indianred}
+title   := afmt.ANSI24{fg = afmt.black, bg = afmt.cornflowerblue, at = {.BOLD}}
+data    := afmt.ANSI24{fg = afmt.cornflowerblue}
+label   := afmt.ANSI24{fg = afmt.orchid}
+notes   := afmt.ANSI24{fg = afmt.cornflowerblue, at = {.ITALIC}}
+
+no_color_bold   := afmt.ANSI3{at = {.BOLD}}
+no_color_italic := afmt.ANSI3{at = {.ITALIC}}
 
 _bytes :: proc(s: string) -> []byte {	return transmute([]byte)(s) }
 
@@ -75,7 +79,7 @@ shell :: proc(allocator: runtime.Allocator) {
 
 	desc.env = os2.environ(allocator) or_else nil
 
-	afmt.print("\e[38;2;255;216;1m")
+	afmt.set("-f[255,216,1]")
 	if process, p_err := os2.process_start(desc); p_err != nil {
 		afmt.println(error, "Process start:", p_err)
 	} else {
@@ -86,11 +90,11 @@ shell :: proc(allocator: runtime.Allocator) {
 			afmt.println(error, "Process close:", c_err)
 		}
 	}
-	afmt.print("\e[0m")
+	afmt.reset()
 }
 
 Args :: struct {
-	connect:    net.Host_Or_Endpoint `args:"name=c,pos=0,required" usage:"Default port is 5555."`,
+	connect:    net.Host_Or_Endpoint `args:"name=c,pos=0,required" usage:"Default port is 5555 if not provided."`,
 	clearcache: string `args:"name=cc" usage:"Clear cache of specified package."`,
 	cleardata:  string `args:"name=cd" usage:"Clear data of specified package."`,
 	dumpsys:    string `args:"name=d"  usage:"Device dumpsys info. Quote commands containing spaces."`,
@@ -100,48 +104,64 @@ Args :: struct {
 	memory:     string `args:"name=m"  usage:"Memory usage of 'system' or specified package."`,
 	packages:   string `args:"name=p"  usage:"Packages installed as either 'user' or 'system'."`,
 	running:    bool   `args:"name=r"  usage:"Running 3rd party applications."`,
+	shell:      bool   `args:"name=s"  usage:"Enter adb shell"`,
 	usage:      string `args:"name=u"  usage:"Disk usage of 'system' or specified package name."`,
-	shell:      bool   `args:"name=s"  usage:"Enter adb shell`,
 	version:    bool   `args:"name=v"  usage:"Version information."`,
 }
 
+usage_tag :: proc(tags: []reflect.Struct_Tag, name: string) -> (usage: string ) {
+	loop: for t in tags {
+		if args, a_ok := reflect.struct_tag_lookup(t, "args"); a_ok {
+			if sub_name, s_ok := flags.get_subtag(args, "name"); s_ok {
+				if sub_name == name {
+					if _usage, u_ok := reflect.struct_tag_lookup(t, "usage"); u_ok {
+						usage = _usage
+					}
+					break loop
+				}
+			}
+		}
+	}
+	return
+}
+
+//write_usage(os2.to_stream(os2.stdout), Args, ODIN_BUILD_PROJECT_NAME)
+
 usage :: proc() {
+	tags := reflect.struct_field_tags(Args)
 	buf: [time.MIN_YYYY_DATE_LEN]u8
 	usage := [][]string {
 		{PACKAGE + " by:", "xuul the terror dog"},
 		{"Compile Date:",  time.to_string_yyyy_mm_dd(time.now(), buf[:])},
 		{"Odin Version:",  ODIN_VERSION},
 		{"",""},
-		{"Usage:", "./aftv c [-cc] [-cd] [-d] [-e] [-k] [-l] [-m] [-p] [-r] [-s] [-v]"},
+		{"Usage:", "aftv c [-cc] [-cd] [-d] [-e] [-k] [-l] [-m] [-p] [-r] [-s] [-u] [-v]"},
 		{"",""},
-		{"-c:<host>, required", "Default port is 5555."},
-		{"-cc:<string>"       , "Clear cache of specified package."},
-		{"-cd:<string>"       , "Clear data of specified package."},
-  	{"-d:<string>"        , "Device dumpsys info. Quote commands containing spaces."},
-  	{"-e:<string>"        , "Execute event KEYCODE. Quote commands containing spaces."},
-  	{"-k:<string>"        , "Kill package name or 'all' (3rd Party) packages."},
-  	{"-l:<string>"        , "Launch package."},
-  	{"-m:<string>"        , "Memory usage of 'system' or specified package."},
-  	{"-p:<string>"        , "Packages installed as either 'user' or 'system'."},
-  	{"-r"                 , "Running 3rd party applications."},
-		{"-s"                 , "Enter adb shell."},
-  	{"-u:<string>"        , "Disk usage of 'system' or specified package name."},
-  	{"-v"                 , "Version information."},
+		{"-c:<host|ip>[:port]", usage_tag(tags, "c")},
+		{"-cc:<string>"       , usage_tag(tags, "cc")},
+		{"-cd:<string>"       , usage_tag(tags, "cd")},
+  	{"-d:<string>"        , usage_tag(tags, "d")},
+  	{"-e:<string>"        , usage_tag(tags, "e")},
+  	{"-k:<string>"        , usage_tag(tags, "k")},
+  	{"-l:<string>"        , usage_tag(tags, "l")},
+  	{"-m:<string>"        , usage_tag(tags, "m")},
+  	{"-p:<string>"        , usage_tag(tags, "p")},
+  	{"-r"                 , usage_tag(tags, "r")},
+		{"-s"                 , usage_tag(tags, "s")},
+  	{"-u:<string>"        , usage_tag(tags, "u")},
+  	{"-v"                 , usage_tag(tags, "v")},
 	}
-	row := [2]afmt.Column(afmt.ANSI24) {
-		{20, .LEFT, {fg = afmt.orange}},
-		{60, .LEFT, {fg = afmt.crimson}},
-	}
-	for u in usage { afmt.printrow(row, u[:]) }
+	cols: [2]afmt.Column(afmt.ANSI24)
+	cols = {{20, .LEFT, {fg = afmt.orange}}, {80, .LEFT, {fg = afmt.crimson}}}
+	afmt.printtable(cols, usage)
 }
 
 parse :: proc(args: ^Args) -> (ok: bool) {
-	#partial switch err in flags.parse(args, os2.args[1:]) {
-	case flags.Help_Request:
-		usage()
-	case flags.Validation_Error:
-		afmt.printfln("%v", error, err)
-		usage()
+	switch err in flags.parse(args, os2.args[1:]) {
+	case flags.Help_Request:     usage()
+	case flags.Validation_Error: afmt.printfln("%v", error, err.message)
+	case flags.Parse_Error:      afmt.printfln("%v", error, err.message)
+	case flags.Open_File_Error:  afmt.printfln("%v", error, err)
 	case: ok = true
 	}
 	return
@@ -260,11 +280,11 @@ main :: proc() {
 			fireos  := exec({"adb", "shell", "getprop", "ro.build.version.name"}, arena)
 			model   := exec({"adb", "shell", "getprop", "ro.product.oemmodel"}, arena)
 			serial  := exec({"adb", "shell", "getprop", "ro.serialno"}, arena)
-			row := [2]afmt.Column(afmt.ANSI24) {{18, .LEFT, label}, {42, .LEFT, data}}
-			afmt.printrow(row, "Android Version:", string(android))
-			afmt.printrow(row, "FireOS Version:", string(fireos))
-			afmt.printrow(row, "Device Model:", string(model))
-			afmt.printrow(row, "Serial No:", string(serial))
+			cols := [2]afmt.Column(afmt.ANSI24) {{18, .LEFT, label}, {42, .LEFT, data}}
+			afmt.printrow(cols, "Android Version:", string(android))
+			afmt.printrow(cols, "FireOS Version:", string(fireos))
+			afmt.printrow(cols, "Device Model:", string(model))
+			afmt.printrow(cols, "Serial No:", string(serial))
 		}
 
 		virtual.arena_destroy(&virt)
@@ -285,18 +305,18 @@ print_system_usage :: proc(diskstats: []byte, allocator: runtime.Allocator) {
 
 	print_disk_speed :: proc(line: []byte, index: int) {
 		title := [2]afmt.Column(afmt.ANSI24) {{17, .LEFT, title}, {63, .LEFT, title}}
-		row   := [2]afmt.Column(afmt.ANSI24) {{17, .LEFT, label}, {63, .LEFT, data}}
+		cols  := [2]afmt.Column(afmt.ANSI24) {{17, .LEFT, label}, {63, .LEFT, data}}
 		if index == 0 {
 			afmt.printrow(title, "Speed", "Disk Metrics")
-			afmt.printrow(row, "Latency:", string(line[len("Latency: "):]))
+			afmt.printrow(cols, "Latency:", string(line[len("Latency: "):]))
 		} else if index == 1 {
-			afmt.printrow(row, "Write:", afmt.tprint(string(line[len("Recent Disk Write Speed (kB/s) = "):]), "kB/s"))
+			afmt.printrow(cols, "Write:", afmt.tprint(string(line[len("Recent Disk Write Speed (kB/s) = "):]), "kB/s"))
 		}
 	}
 
 	print_disk_usage :: proc(line: []byte, index: int, allocator: runtime.Allocator) {
 		title := [2]afmt.Column(afmt.ANSI24) {{17, .LEFT, title}, {63, .LEFT, title}}
-		row := [10]afmt.Column(afmt.ANSI24) {
+		cols  := [10]afmt.Column(afmt.ANSI24) {
 			{17, .LEFT,  label}, {10, .RIGHT, data}, {10, .RIGHT, data}, {03, .RIGHT, data}, {12, .RIGHT, data},
 			{11, .RIGHT, data }, {06, .RIGHT, data}, {02, .RIGHT, data}, {04, .RIGHT, data}, {05, .RIGHT, data},
 		}
@@ -316,13 +336,13 @@ print_system_usage :: proc(diskstats: []byte, allocator: runtime.Allocator) {
 			afmt.printrow(title, "System", "Disk Usage")
 		}
 		if len(data) >= 10 {
-			afmt.printrow(row, data[:])
+			afmt.printtable(cols, data)
 		}
 	}
 
 	print_group_usage :: proc (line: []byte, index: int, allocator: runtime.Allocator) {
 		title := [2]afmt.Column(afmt.ANSI24) {{17, .LEFT, title}, {63, .LEFT, title}}
-		row   := [3]afmt.Column(afmt.ANSI24) {{17, .LEFT, label}, {10, .RIGHT, data}, {10, .RIGHT, data}}
+		cols  := [3]afmt.Column(afmt.ANSI24) {{17, .LEFT, label}, {10, .RIGHT, data}, {10, .RIGHT, data}}
 		split := bytes.split(line, {':', ' '}, allocator)
 		data  := make([dynamic]string, 3, allocator = allocator)
 		if num, num_ok := strconv.parse_f64(string(split[1])); num_ok {
@@ -333,13 +353,13 @@ print_system_usage :: proc(diskstats: []byte, allocator: runtime.Allocator) {
 		if index == 5 {
 			afmt.printrow(title, "Categorical", "Disk Usage")
 		}
-		afmt.printrow(row, data[:])
+		afmt.printtable(cols, data)
 	}
 }
 
 print_package_usage :: proc (diskstats: []byte, pkg: string, allocator: runtime.Allocator) {
 	title := [2]afmt.Column(afmt.ANSI24) {{17, .LEFT, title}, {20, .LEFT, title}}
-	row   := [3]afmt.Column(afmt.ANSI24) {{17, .LEFT, label}, {10, .RIGHT, data}, {10, .RIGHT, data}}
+	cols  := [3]afmt.Column(afmt.ANSI24) {{17, .LEFT, label}, {10, .RIGHT, data}, {10, .RIGHT, data}}
 	lines := bytes.split(diskstats, {'\n'}, allocator)
 
 	app_index := -1
@@ -384,7 +404,7 @@ print_package_usage :: proc (diskstats: []byte, pkg: string, allocator: runtime.
 	cache_gb := afmt.tprintf("%s%.2f%s", "(", cache_size / 1048576 / 1024, "GB)")
 
 	afmt.printrow(title, "Disk Usage of:", pkg)
-	afmt.printrow(row, "App Size:", app_mb, app_gb)
-	afmt.printrow(row, "Data Size:", data_mb, data_gb)
-	afmt.printrow(row, "Cache Size:", cache_mb, cache_gb)
+	afmt.printrow(cols, "App Size:", app_mb, app_gb)
+	afmt.printrow(cols, "Data Size:", data_mb, data_gb)
+	afmt.printrow(cols, "Cache Size:", cache_mb, cache_gb)
 }
