@@ -1,6 +1,6 @@
 package aftv
 
-import "core:os/os2"
+import "core:os"
 import "core:net"
 import "core:time"
 import "core:flags"
@@ -28,15 +28,15 @@ no_color_italic := afmt.ANSI3{at = {.ITALIC}}
 _bytes :: proc(s: string) -> []byte {	return transmute([]byte)(s) }
 
 exec :: proc(command: []string, allocator := context.allocator) -> []byte {
-	desc := os2.Process_Desc {command = command}
-	state, stdout, stderr, error := os2.process_exec(desc, allocator)
+	desc := os.Process_Desc {command = command}
+	state, stdout, stderr, error := os.process_exec(desc, allocator)
 	stdout = bytes.trim_right(stdout, {'\n'})
 	stderr = bytes.trim_right(stderr, {'\n'})
 	if len(stderr) != 0 {
 		afmt.printfln("%s", warning, stderr)
 	}
 	if !state.success {
-		afmt.printfln("%s: %s", error, desc.command[0], os2.error_string(error))
+		afmt.printfln("%s: %s", error, desc.command[0], os.error_string(error))
 	}
 	if allocator == context.allocator { delete(stderr) }
 	return stdout
@@ -70,23 +70,23 @@ disconnect :: proc() {
 }
 
 shell :: proc(allocator: runtime.Allocator) {
-	desc := os2.Process_Desc {
+	desc := os.Process_Desc {
 		command = {"adb", "shell"},
-		stderr  = os2.stderr,
-		stdout  = os2.stdout,
-		stdin   = os2.stdin,
+		stderr  = os.stderr,
+		stdout  = os.stdout,
+		stdin   = os.stdin,
 	}
 
-	desc.env = os2.environ(allocator) or_else nil
+	desc.env = os.environ(allocator) or_else nil
 
 	afmt.set("-f[255,216,1]")
-	if process, p_err := os2.process_start(desc); p_err != nil {
+	if process, p_err := os.process_start(desc); p_err != nil {
 		afmt.println(error, "Process start:", p_err)
 	} else {
-		if _, w_err := os2.process_wait(process); w_err != nil {
+		if _, w_err := os.process_wait(process); w_err != nil {
 			afmt.println(error, "Process wait:", w_err)
 		}
-		if c_err := os2.process_close(process); c_err != nil {
+		if c_err := os.process_close(process); c_err != nil {
 			afmt.println(error, "Process close:", c_err)
 		}
 	}
@@ -157,7 +157,7 @@ usage :: proc() {
 }
 
 parse :: proc(args: ^Args) -> (ok: bool) {
-	switch err in flags.parse(args, os2.args[1:]) {
+	switch err in flags.parse(args, os.args[1:]) {
 	case flags.Help_Request:     usage()
 	case flags.Validation_Error: afmt.printfln("%v", error, err.message)
 	case flags.Parse_Error:      afmt.printfln("%v", error, err.message)
