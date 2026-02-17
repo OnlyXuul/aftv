@@ -2,13 +2,14 @@ package aftv
 
 import "core:os"
 import "core:net"
-import "core:time"
 import "core:flags"
 import "core:bytes"
 import "core:strconv"
 import "base:runtime"
 import "core:reflect"
 import "core:mem/virtual"
+import "core:c/libc"
+import "core:mem"
 
 import "shared:afmt"
 
@@ -25,11 +26,19 @@ notes   := afmt.ANSI24{fg = afmt.cornflowerblue, at = {.ITALIC}}
 no_color_bold   := afmt.ANSI3{at = {.BOLD}}
 no_color_italic := afmt.ANSI3{at = {.ITALIC}}
 
+localtime :: proc(fmt: cstring, buf: []byte) -> (res: string) {
+	now := libc.time(nil)
+	lti := libc.localtime(&now)
+	end := libc.strftime(raw_data(buf[:]), len(buf), fmt, lti)
+	return string(buf[:end])
+}
+
 _bytes :: proc(s: string) -> []byte {	return transmute([]byte)(s) }
 
-exec :: proc(command: []string, allocator := context.allocator) -> []byte {
+@(require_results)
+exec :: proc(command: []string, allocator: mem.Allocator) -> []byte {
 	desc := os.Process_Desc {command = command}
-	state, stdout, stderr, error := os.process_exec(desc, allocator)
+	state, stdout, stderr, error := os.process_exec(desc, context.allocator)
 	stdout = bytes.trim_right(stdout, {'\n'})
 	stderr = bytes.trim_right(stderr, {'\n'})
 	if len(stderr) != 0 {
@@ -38,8 +47,8 @@ exec :: proc(command: []string, allocator := context.allocator) -> []byte {
 	if !state.success {
 		afmt.printfln("%s: %s", error, desc.command[0], os.error_string(error))
 	}
-	if allocator == context.allocator { delete(stderr) }
-	return stdout
+	delete(stderr, allocator)
+	return bytes.clone(stdout, allocator)
 }
 
 connect :: proc(connect: net.Host_Or_Endpoint) -> (success: bool) {
@@ -51,7 +60,7 @@ connect :: proc(connect: net.Host_Or_Endpoint) -> (success: bool) {
 		connection = afmt.tprintf("%v%v%v", net.address_to_string(c.address), ":", c.port == 0 ? 5555 : c.port)
 	}
 
-	stdout := exec({"adb", "connect",  connection})
+	stdout := exec({"adb", "connect",  connection}, context.allocator)
 	defer delete(stdout)
 
 	if bytes.contains(stdout, _bytes("connected")) {
@@ -64,20 +73,18 @@ connect :: proc(connect: net.Host_Or_Endpoint) -> (success: bool) {
 }
 
 disconnect :: proc() {
-	stdout := exec({"adb", "disconnect"})
+	stdout := exec({"adb", "disconnect"}, context.allocator)
 	afmt.printfln("%s", status, stdout)
 	delete(stdout)
 }
 
-shell :: proc(allocator: runtime.Allocator) {
+shell :: proc() {
 	desc := os.Process_Desc {
 		command = {"adb", "shell"},
 		stderr  = os.stderr,
 		stdout  = os.stdout,
 		stdin   = os.stdin,
 	}
-
-	desc.env = os.environ(allocator) or_else nil
 
 	afmt.set("-f[255,216,1]")
 	if process, p_err := os.process_start(desc); p_err != nil {
@@ -129,10 +136,10 @@ usage_tag :: proc(tags: []reflect.Struct_Tag, name: string) -> (usage: string ) 
 
 usage :: proc() {
 	tags := reflect.struct_field_tags(Args)
-	buf: [time.MIN_YYYY_DATE_LEN]u8
+	buf: [12]byte
 	usage := [][]string {
 		{PACKAGE + " by:", "xuul the terror dog"},
-		{"Compile Date:",  time.to_string_yyyy_mm_dd(time.now(), buf[:])},
+		{"Compile Date:",  localtime("%Y-%m-%d", buf[:])},
 		{"Odin Version:",  ODIN_VERSION},
 		{"",""},
 		{"Usage:", "aftv c [-cc] [-cd] [-d] [-e] [-k] [-l] [-m] [-p] [-r] [-s] [-u] [-v]"},
@@ -191,7 +198,7 @@ main :: proc() {
 
 		if args.event != "" {
 			afmt.printfln("%s %s", notes, "Attempting to execute keyevent:", args.event)
-			event := exec({"adb", "shell", "input", "keyevent", args.event})
+			event := exec({"adb", "shell", "input", "keyevent", args.event}, arena)
 		}
 
 		if args.launch != "" {
@@ -264,7 +271,7 @@ main :: proc() {
 
 		if args.shell {
 			afmt.println(afmt.ANSI24{fg = afmt.RGB{249, 86, 2}}, "Starting ADB shell ...")
-			shell(arena)
+			shell()
 		}
 
 		if args.usage == "system" || args.usage == "sys" {
