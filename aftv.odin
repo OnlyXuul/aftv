@@ -9,7 +9,6 @@ import "base:runtime"
 import "core:reflect"
 import "core:mem/virtual"
 import "core:c/libc"
-import "core:mem"
 
 import "shared:afmt"
 
@@ -29,16 +28,18 @@ no_color_italic := afmt.ANSI3{at = {.ITALIC}}
 localtime :: proc(fmt: cstring, buf: []byte) -> (res: string) {
 	now := libc.time(nil)
 	lti := libc.localtime(&now)
-	end := libc.strftime(raw_data(buf[:]), len(buf), fmt, lti)
-	return string(buf[:end])
+	szt := libc.strftime(raw_data(buf[:]), len(buf), fmt, lti)
+	return string(buf[:szt])
 }
 
 _bytes :: proc(s: string) -> []byte {	return transmute([]byte)(s) }
 
 @(require_results)
-exec :: proc(command: []string, allocator: mem.Allocator) -> []byte {
+exec :: proc(command: []string, allocator: runtime.Allocator) -> []byte {
 	desc := os.Process_Desc {command = command}
 	state, stdout, stderr, error := os.process_exec(desc, context.allocator)
+	defer delete(stdout)
+	defer delete(stderr)
 	stdout = bytes.trim_right(stdout, {'\n'})
 	stderr = bytes.trim_right(stderr, {'\n'})
 	if len(stderr) != 0 {
@@ -47,7 +48,6 @@ exec :: proc(command: []string, allocator: mem.Allocator) -> []byte {
 	if !state.success {
 		afmt.printfln("%s: %s", error, desc.command[0], os.error_string(error))
 	}
-	delete(stderr, allocator)
 	return bytes.clone(stdout, allocator)
 }
 
@@ -87,15 +87,12 @@ shell :: proc() {
 	}
 
 	afmt.set("-f[255,216,1]")
-	if process, p_err := os.process_start(desc); p_err != nil {
-		afmt.println(error, "Process start:", p_err)
-	} else {
-		if _, w_err := os.process_wait(process); w_err != nil {
-			afmt.println(error, "Process wait:", w_err)
-		}
-		if c_err := os.process_close(process); c_err != nil {
-			afmt.println(error, "Process close:", c_err)
-		}
+	if process, start_err := os.process_start(desc); start_err != nil {
+		afmt.println(error, "Process start:", os.error_string(start_err))
+	} else if state, wait_err := os.process_wait(process); wait_err != nil {
+		afmt.println(error, "Process wait:", os.error_string(wait_err))
+	} else if !state.exited {
+		_ = os.process_kill(process)
 	}
 	afmt.reset()
 }
@@ -108,12 +105,12 @@ Args :: struct {
 	event:      string `args:"name=e"  usage:"Execute event KEYCODE. Quote commands containing spaces."`,
 	kill:       string `args:"name=k"  usage:"Kill package name or 'all' (3rd Party) packages."`,
 	launch:     string `args:"name=l"  usage:"Launch package."`,
-	memory:     string `args:"name=m"  usage:"Memory usage of 'system' or specified package."`,
+	memory:     string `args:"name=m"  usage:"Memory usage: 'system' or package name."`,
 	packages:   string `args:"name=p"  usage:"Packages installed as either 'user' or 'system'."`,
 	running:    bool   `args:"name=r"  usage:"Running 3rd party applications."`,
 	shell:      bool   `args:"name=s"  usage:"Enter adb shell"`,
-	usage:      string `args:"name=u"  usage:"Disk usage of 'system' or specified package name."`,
-	version:    bool   `args:"name=v"  usage:"Version information."`,
+	usage:      string `args:"name=u"  usage:"Disk usage: 'system', 'df' or package name."`,
+	version:    bool   `args:"name=v"  usage:"Version information of remote connection."`,
 }
 
 usage_tag :: proc(tags: []reflect.Struct_Tag, name: string) -> (usage: string ) {
@@ -159,7 +156,7 @@ usage :: proc() {
   	{"-v"                 , usage_tag(tags, "v")},
 	}
 	cols: [2]afmt.Column(afmt.ANSI24)
-	cols = {{20, .LEFT, {fg = afmt.orange}}, {80, .LEFT, {fg = afmt.crimson}}}
+	cols = {{20, .LEFT, {fg = afmt.orange}}, {80, .LEFT, {fg = afmt.orangered}}}
 	afmt.printtable(cols, usage)
 }
 
@@ -277,6 +274,9 @@ main :: proc() {
 		if args.usage == "system" || args.usage == "sys" {
 			diskstats := exec({"adb", "shell", "dumpsys", "diskstats"}, arena)
 			print_system_usage(diskstats, arena)
+		} else if args.usage == "df" {
+			diskstats := exec({"adb", "shell", "df", "-h"}, arena)
+			print_df_usage(diskstats, arena)
 		} else if args.usage != "" {
 			diskstats := exec({"adb", "shell", "dumpsys", "diskstats"}, arena)
 			print_package_usage(diskstats, args.usage, arena)
@@ -296,6 +296,32 @@ main :: proc() {
 
 		virtual.arena_destroy(&virt)
 		disconnect()
+	}
+}
+
+print_df_usage :: proc(diskstats: []byte, allocator: runtime.Allocator) {
+	widths: [6]u8
+	_diskstats, _ := bytes.replace(diskstats, _bytes("Mounted on"), _bytes("Mounted-on"), 1, allocator)
+	lines := bytes.split(_diskstats, {'\n'}, allocator)
+	split := make([][][]byte, len(lines), allocator)
+	for line, l in lines {
+		split[l] = bytes.split_multi(line, {{' '}}, true, allocator)
+		for d, i in split[l] {
+			if u8(len(d)) > widths[i] { widths[i] = u8(len(d))}
+		}
+	}
+	cols := [7]afmt.Column(afmt.ANSI24) {
+		{widths[0] + 1, .LEFT , {}}, {widths[1] + 1, .RIGHT, {}}, {widths[2] + 2, .RIGHT, {}},
+		{widths[3] + 1, .RIGHT, {}}, {widths[4] + 1, .RIGHT, {}}, {1, .RIGHT, {}}, {widths[5] + 1, .LEFT , {}},
+	}
+	for s, i in split {
+		if i == 0 {
+			for &c in cols {c.ansi = title}
+			afmt.printrow(cols, string(s[0]), string(s[1]), string(s[2]), string(s[3]), string(s[4]), " ", string(s[5]))
+		} else {
+			for &c in cols {c.ansi = data}
+			afmt.printrow(cols, string(s[0]), string(s[1]), string(s[2]), string(s[3]), string(s[4]), " ", string(s[5]))
+		}
 	}
 }
 
