@@ -12,8 +12,6 @@ import "core:c/libc"
 
 import "shared:afmt"
 
-PACKAGE :: ODIN_BUILD_PROJECT_NAME
-
 status  := afmt.ANSI24{fg = afmt.darkseagreen}
 warning := afmt.ANSI24{fg = afmt.khaki}
 error   := afmt.ANSI24{fg = afmt.indianred}
@@ -21,9 +19,6 @@ title   := afmt.ANSI24{fg = afmt.black, bg = afmt.cornflowerblue, at = {.BOLD}}
 data    := afmt.ANSI24{fg = afmt.cornflowerblue}
 label   := afmt.ANSI24{fg = afmt.orchid}
 notes   := afmt.ANSI24{fg = afmt.cornflowerblue, at = {.ITALIC}}
-
-no_color_bold   := afmt.ANSI3{at = {.BOLD}}
-no_color_italic := afmt.ANSI3{at = {.ITALIC}}
 
 localtime :: proc(fmt: cstring, buf: []byte) -> (res: string) {
 	now := libc.time(nil)
@@ -37,16 +32,16 @@ _bytes :: proc(s: string) -> []byte {	return transmute([]byte)(s) }
 @(require_results)
 exec :: proc(command: []string, allocator: runtime.Allocator) -> []byte {
 	desc := os.Process_Desc {command = command}
-	state, stdout, stderr, error := os.process_exec(desc, context.allocator)
+	state, stdout, stderr, os_err := os.process_exec(desc, context.allocator)
 	defer delete(stdout)
 	defer delete(stderr)
-	stdout = bytes.trim_right(stdout, {'\n'})
-	stderr = bytes.trim_right(stderr, {'\n'})
+	stdout = bytes.trim_right(stdout, {'\n', '\r'})
+	stderr = bytes.trim_right(stderr, {'\n', '\r'})
 	if len(stderr) != 0 {
 		afmt.printfln("%s", warning, stderr)
 	}
 	if !state.success {
-		afmt.printfln("%s: %s", error, desc.command[0], os.error_string(error))
+		afmt.printfln("%s %s", error, desc.command[0], os.error_string(os_err))
 	}
 	return bytes.clone(stdout, allocator)
 }
@@ -135,7 +130,7 @@ usage :: proc() {
 	tags := reflect.struct_field_tags(Args)
 	buf: [12]byte
 	usage := [][]string {
-		{PACKAGE + " by:", "xuul the terror dog"},
+		{ODIN_BUILD_PROJECT_NAME + " by:", "xuul the terror dog"},
 		{"Compile Date:",  localtime("%Y-%m-%d", buf[:])},
 		{"Odin Version:",  ODIN_VERSION},
 		{"",""},
@@ -172,6 +167,10 @@ parse :: proc(args: ^Args) -> (ok: bool) {
 }
 
 main :: proc() {
+	when ODIN_OS == .Windows {
+		afmt.set_utf8_terminal()
+		defer afmt.reset_utf8_terminal()
+	}
 	args: Args
 	virt: virtual.Arena
 	arena := virtual.arena_allocator(&virt)
@@ -212,7 +211,8 @@ main :: proc() {
 			packages := exec({"adb", "shell", "pm", "list", "packages", "-3"}, arena)
 			running  := exec({"adb", "shell", "ps", "-o", "ARGS=CMD"}, arena)
 			list1, _ := bytes.remove_all(packages, _bytes("package:"), arena)
-			list2    := bytes.split(running, {'\n'}, arena)
+			//list2    := bytes.split(running, {'\n'}, arena)
+			list2    := bytes.split_multi(running, {{'\n'}, {'\r'}}, skip_empty = true, allocator = arena)
 			for e in list2 {
 				if !bytes.contains(e, _bytes("com.amazon.tv")) && bytes.contains(list1, e) {
 					afmt.printfln("%s %s", notes, "Killing:", e)
@@ -241,7 +241,8 @@ main :: proc() {
 		if  args.packages == "user" {
 			packages := exec({"adb", "shell", "pm", "list", "packages", "-3"}, arena)
 			list1, _ := bytes.remove_all(packages, _bytes("package:"), arena)
-			list2    := bytes.split(list1, {'\n'}, arena)
+			//list2    := bytes.split(list1, {'\n'}, arena)
+			list2    := bytes.split_multi(list1, {{'\n'}, {'\r'}}, skip_empty = true, allocator = arena)
 			afmt.printfln("%s", title, "User Installed (3rd Party) Packages:")
 			for e in list2 {
 				if !bytes.contains(e, _bytes("com.amazon.tv")) { afmt.printfln("%s", data, e) }
@@ -257,7 +258,8 @@ main :: proc() {
 			packages := exec({"adb", "shell", "pm", "list", "packages", "-3"}, arena)
 			running  := exec({"adb", "shell", "ps", "-o", "ARGS=CMD"}, arena)
 			list1, _ := bytes.remove_all(packages, _bytes("package:"), arena)
-			list2    := bytes.split(running, {'\n'}, arena)
+			//list2    := bytes.split(running, {'\n'}, arena)
+			list2    := bytes.split_multi(running, {{'\n'}, {'\r'}}, skip_empty = true, allocator = arena)
 			afmt.printfln("%s", title, "Running User Installed (3rd Party) Packages:")
 			for e in list2 {
 				if !bytes.contains(e, _bytes("com.amazon.tv")) && bytes.contains(list1, e) {
@@ -299,34 +301,8 @@ main :: proc() {
 	}
 }
 
-print_df_usage :: proc(diskstats: []byte, allocator: runtime.Allocator) {
-	widths: [6]u8
-	_diskstats, _ := bytes.replace(diskstats, _bytes("Mounted on"), _bytes("Mounted-on"), 1, allocator)
-	lines := bytes.split(_diskstats, {'\n'}, allocator)
-	split := make([][][]byte, len(lines), allocator)
-	for line, l in lines {
-		split[l] = bytes.split_multi(line, {{' '}}, true, allocator)
-		for d, i in split[l] {
-			if u8(len(d)) > widths[i] { widths[i] = u8(len(d))}
-		}
-	}
-	cols := [7]afmt.Column(afmt.ANSI24) {
-		{widths[0] + 1, .LEFT , {}}, {widths[1] + 1, .RIGHT, {}}, {widths[2] + 2, .RIGHT, {}},
-		{widths[3] + 1, .RIGHT, {}}, {widths[4] + 1, .RIGHT, {}}, {1, .RIGHT, {}}, {widths[5] + 1, .LEFT , {}},
-	}
-	for s, i in split {
-		if i == 0 {
-			for &c in cols {c.ansi = title}
-			afmt.printrow(cols, string(s[0]), string(s[1]), string(s[2]), string(s[3]), string(s[4]), " ", string(s[5]))
-		} else {
-			for &c in cols {c.ansi = data}
-			afmt.printrow(cols, string(s[0]), string(s[1]), string(s[2]), string(s[3]), string(s[4]), " ", string(s[5]))
-		}
-	}
-}
-
 print_system_usage :: proc(diskstats: []byte, allocator: runtime.Allocator) {
-	lines := bytes.split(diskstats, {'\n'}, allocator)
+	lines := bytes.split_multi(diskstats, {{'\n'}, {'\r'}}, skip_empty = true, allocator = allocator)
 	for line, idx in lines {
 		switch idx {
 		case 00..=01: print_disk_speed(line, idx)
@@ -390,10 +366,38 @@ print_system_usage :: proc(diskstats: []byte, allocator: runtime.Allocator) {
 	}
 }
 
+print_df_usage :: proc(diskstats: []byte, allocator: runtime.Allocator) {
+	widths: [6]u8
+	_diskstats, _ := bytes.replace(diskstats, _bytes("Mounted on"), _bytes("Mounted-on"), 1, allocator)
+	//lines := bytes.split(_diskstats, {'\n'}, allocator)
+	lines := bytes.split_multi(_diskstats, {{'\n'}, {'\r'}}, skip_empty = true, allocator = allocator)
+	split := make([][][]byte, len(lines), allocator)
+	for line, l in lines {
+		split[l] = bytes.split_multi(line, {{' '}}, true, allocator)
+		for d, i in split[l] {
+			if u8(len(d)) > widths[i] { widths[i] = u8(len(d))}
+		}
+	}
+	cols := [7]afmt.Column(afmt.ANSI24) {
+		{widths[0] + 1, .LEFT , {}}, {widths[1] + 1, .RIGHT, {}}, {widths[2] + 2, .RIGHT, {}},
+		{widths[3] + 1, .RIGHT, {}}, {widths[4] + 1, .RIGHT, {}}, {1, .RIGHT, {}}, {widths[5] + 1, .LEFT , {}},
+	}
+	for s, i in split {
+		if i == 0 {
+			for &c in cols {c.ansi = title}
+			afmt.printrow(cols, string(s[0]), string(s[1]), string(s[2]), string(s[3]), string(s[4]), " ", string(s[5]))
+		} else {
+			for &c in cols {c.ansi = data}
+			afmt.printrow(cols, string(s[0]), string(s[1]), string(s[2]), string(s[3]), string(s[4]), " ", string(s[5]))
+		}
+	}
+}
+
 print_package_usage :: proc (diskstats: []byte, pkg: string, allocator: runtime.Allocator) {
 	title := [2]afmt.Column(afmt.ANSI24) {{17, .LEFT, title}, {20, .LEFT, title}}
 	cols  := [3]afmt.Column(afmt.ANSI24) {{17, .LEFT, label}, {10, .RIGHT, data}, {10, .RIGHT, data}}
-	lines := bytes.split(diskstats, {'\n'}, allocator)
+	//lines := bytes.split(diskstats, {'\n'}, allocator)
+	lines := bytes.split_multi(diskstats, {{'\n'}, {'\r'}}, skip_empty = true, allocator = allocator)
 
 	app_index := -1
 	app_size:   f64
