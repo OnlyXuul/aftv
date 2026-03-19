@@ -9,8 +9,20 @@ import "base:runtime"
 import "core:reflect"
 import "core:mem/virtual"
 import "core:c/libc"
+import "core:time"
+import "core:time/datetime"
+import "core:time/timezone"
 
 import "shared:afmt"
+
+get_compile_date :: proc() -> (cd: string, ok: bool) {
+	tz := timezone.region_load("local", context.allocator) or_return
+	defer timezone.region_destroy(tz)
+	tm := time.Time{i64(ODIN_COMPILE_TIMESTAMP)}
+	dt := time.time_to_datetime(tm) or_return
+	cdt := timezone.datetime_to_tz(dt, tz) or_return
+	return afmt.tprintf("%i-%2i-%2i", cdt.year, cdt.month, cdt.day), true
+}
 
 status  := afmt.ANSI24{fg = afmt.darkseagreen}
 warning := afmt.ANSI24{fg = afmt.khaki}
@@ -19,13 +31,6 @@ title   := afmt.ANSI24{fg = afmt.black, bg = afmt.cornflowerblue, at = {.BOLD}}
 data    := afmt.ANSI24{fg = afmt.cornflowerblue}
 label   := afmt.ANSI24{fg = afmt.orchid}
 notes   := afmt.ANSI24{fg = afmt.cornflowerblue, at = {.ITALIC}}
-
-localtime :: proc(fmt: cstring, buf: []byte) -> (res: string) {
-	now := libc.time(nil)
-	lti := libc.localtime(&now)
-	szt := libc.strftime(raw_data(buf[:]), len(buf), fmt, lti)
-	return string(buf[:szt])
-}
 
 _bytes :: proc(s: string) -> []byte {	return transmute([]byte)(s) }
 
@@ -128,10 +133,10 @@ usage_tag :: proc(tags: []reflect.Struct_Tag, name: string) -> (usage: string ) 
 
 usage :: proc() {
 	tags := reflect.struct_field_tags(Args)
-	buf: [12]byte
+	compile_date, _ := get_compile_date()
 	usage := [][]string {
 		{ODIN_BUILD_PROJECT_NAME + " by:", "xuul the terror dog"},
-		{"Compile Date:",  localtime("%Y-%m-%d", buf[:])},
+		{"Compile Date:",  compile_date},
 		{"Odin Version:",  ODIN_VERSION},
 		{"",""},
 		{"Usage:", "aftv c [-cc] [-cd] [-d] [-e] [-k] [-l] [-m] [-p] [-r] [-s] [-u] [-v]"},
