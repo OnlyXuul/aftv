@@ -8,14 +8,13 @@ import "core:strconv"
 import "base:runtime"
 import "core:reflect"
 import "core:mem/virtual"
-import "core:c/libc"
 import "core:time"
 import "core:time/datetime"
 import "core:time/timezone"
 
 import "shared:afmt"
 
-get_compile_date :: proc() -> (cd: string, ok: bool) {
+get_compile_date :: proc() -> (cd: string, ok: bool) #optional_ok {
 	tz := timezone.region_load("local", context.allocator) or_return
 	defer timezone.region_destroy(tz)
 	tm := time.Time{i64(ODIN_COMPILE_TIMESTAMP)}
@@ -27,10 +26,10 @@ get_compile_date :: proc() -> (cd: string, ok: bool) {
 status  := afmt.ANSI24{fg = afmt.darkseagreen}
 warning := afmt.ANSI24{fg = afmt.khaki}
 error   := afmt.ANSI24{fg = afmt.indianred}
-title   := afmt.ANSI24{fg = afmt.black, bg = afmt.cornflowerblue, at = {.BOLD}}
+title   := afmt.ANSI24{fg = afmt.black, bg = afmt.cornflowerblue, at = {.bold}}
 data    := afmt.ANSI24{fg = afmt.cornflowerblue}
 label   := afmt.ANSI24{fg = afmt.orchid}
-notes   := afmt.ANSI24{fg = afmt.cornflowerblue, at = {.ITALIC}}
+notes   := afmt.ANSI24{fg = afmt.cornflowerblue, at = {.italic}}
 
 _bytes :: proc(s: string) -> []byte {	return transmute([]byte)(s) }
 
@@ -113,17 +112,12 @@ Args :: struct {
 	version:    bool   `args:"name=v"  usage:"Version information of remote connection."`,
 }
 
-usage_tag :: proc(tags: []reflect.Struct_Tag, name: string) -> (usage: string ) {
-	loop: for t in tags {
-		if args, a_ok := reflect.struct_tag_lookup(t, "args"); a_ok {
-			if sub_name, s_ok := flags.get_subtag(args, "name"); s_ok {
-				if sub_name == name {
-					if _usage, u_ok := reflect.struct_tag_lookup(t, "usage"); u_ok {
-						usage = _usage
-					}
-					break loop
-				}
-			}
+usage_tag :: proc(tags: []reflect.Struct_Tag, tag: string) -> (usage: string) {
+	for t in tags {
+		args := reflect.struct_tag_lookup(t, "args") or_continue
+		if name := flags.get_subtag(args, "name") or_continue; name == tag {
+			usage = reflect.struct_tag_lookup(t, "usage") or_break
+			return
 		}
 	}
 	return
@@ -133,7 +127,7 @@ usage_tag :: proc(tags: []reflect.Struct_Tag, name: string) -> (usage: string ) 
 
 usage :: proc() {
 	tags := reflect.struct_field_tags(Args)
-	compile_date, _ := get_compile_date()
+	compile_date := get_compile_date()
 	usage := [][]string {
 		{ODIN_BUILD_PROJECT_NAME + " by:", "xuul the terror dog"},
 		{"Compile Date:",  compile_date},
@@ -163,7 +157,12 @@ usage :: proc() {
 parse :: proc(args: ^Args) -> (ok: bool) {
 	switch err in flags.parse(args, os.args[1:]) {
 	case flags.Help_Request:     usage()
-	case flags.Validation_Error: afmt.printfln("%v", error, err.message)
+	case flags.Validation_Error:
+		if len(os.args) <= 1 {
+			usage()
+		} else {
+			afmt.printfln("%v", error, err.message)
+		}
 	case flags.Parse_Error:      afmt.printfln("%v", error, err.message)
 	case flags.Open_File_Error:  afmt.printfln("%v", error, err)
 	case: ok = true
