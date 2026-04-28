@@ -19,8 +19,8 @@ get_compile_date :: proc() -> (cd: string, ok: bool) #optional_ok {
 	defer timezone.region_destroy(tz)
 	tm := time.Time{i64(ODIN_COMPILE_TIMESTAMP)}
 	dt := time.time_to_datetime(tm) or_return
-	cdt := timezone.datetime_to_tz(dt, tz) or_return
-	return afmt.tprintf("%i-%2i-%2i", cdt.year, cdt.month, cdt.day), true
+	dz := timezone.datetime_to_tz(dt, tz) or_return
+	return afmt.tprintf("%i-%2i-%2i", dz.year, dz.month, dz.day), true
 }
 
 status  := afmt.ANSI24{fg = afmt.darkseagreen}
@@ -138,16 +138,16 @@ usage :: proc() {
 		{"-c:<host|ip>[:port]", usage_tag(tags, "c")},
 		{"-cc:<string>"       , usage_tag(tags, "cc")},
 		{"-cd:<string>"       , usage_tag(tags, "cd")},
-  	{"-d:<string>"        , usage_tag(tags, "d")},
-  	{"-e:<string>"        , usage_tag(tags, "e")},
-  	{"-k:<string>"        , usage_tag(tags, "k")},
-  	{"-l:<string>"        , usage_tag(tags, "l")},
-  	{"-m:<string>"        , usage_tag(tags, "m")},
-  	{"-p:<string>"        , usage_tag(tags, "p")},
-  	{"-r"                 , usage_tag(tags, "r")},
+		{"-d:<string>"        , usage_tag(tags, "d")},
+		{"-e:<string>"        , usage_tag(tags, "e")},
+		{"-k:<string>"        , usage_tag(tags, "k")},
+		{"-l:<string>"        , usage_tag(tags, "l")},
+		{"-m:<string>"        , usage_tag(tags, "m")},
+		{"-p:<string>"        , usage_tag(tags, "p")},
+		{"-r"                 , usage_tag(tags, "r")},
 		{"-s"                 , usage_tag(tags, "s")},
-  	{"-u:<string>"        , usage_tag(tags, "u")},
-  	{"-v"                 , usage_tag(tags, "v")},
+		{"-u:<string>"        , usage_tag(tags, "u")},
+		{"-v"                 , usage_tag(tags, "v")},
 	}
 	cols: [2]afmt.Column(afmt.ANSI24)
 	cols = {{20, .LEFT, {fg = afmt.orange}}, {80, .LEFT, {fg = afmt.orangered}}}
@@ -215,7 +215,6 @@ main :: proc() {
 			packages := exec({"adb", "shell", "pm", "list", "packages", "-3"}, arena)
 			running  := exec({"adb", "shell", "ps", "-o", "ARGS=CMD"}, arena)
 			list1, _ := bytes.remove_all(packages, _bytes("package:"), arena)
-			//list2    := bytes.split(running, {'\n'}, arena)
 			list2    := bytes.split_multi(running, {{'\n'}, {'\r'}}, skip_empty = true, allocator = arena)
 			for e in list2 {
 				if !bytes.contains(e, _bytes("com.amazon.tv")) && bytes.contains(list1, e) {
@@ -245,7 +244,6 @@ main :: proc() {
 		if  args.packages == "user" {
 			packages := exec({"adb", "shell", "pm", "list", "packages", "-3"}, arena)
 			list1, _ := bytes.remove_all(packages, _bytes("package:"), arena)
-			//list2    := bytes.split(list1, {'\n'}, arena)
 			list2    := bytes.split_multi(list1, {{'\n'}, {'\r'}}, skip_empty = true, allocator = arena)
 			afmt.printfln("%s", title, "User Installed (3rd Party) Packages:")
 			for e in list2 {
@@ -262,7 +260,6 @@ main :: proc() {
 			packages := exec({"adb", "shell", "pm", "list", "packages", "-3"}, arena)
 			running  := exec({"adb", "shell", "ps", "-o", "ARGS=CMD"}, arena)
 			list1, _ := bytes.remove_all(packages, _bytes("package:"), arena)
-			//list2    := bytes.split(running, {'\n'}, arena)
 			list2    := bytes.split_multi(running, {{'\n'}, {'\r'}}, skip_empty = true, allocator = arena)
 			afmt.printfln("%s", title, "Running User Installed (3rd Party) Packages:")
 			for e in list2 {
@@ -373,7 +370,6 @@ print_system_usage :: proc(diskstats: []byte, allocator: runtime.Allocator) {
 print_df_usage :: proc(diskstats: []byte, allocator: runtime.Allocator) {
 	widths: [6]u8
 	_diskstats, _ := bytes.replace(diskstats, _bytes("Mounted on"), _bytes("Mounted-on"), 1, allocator)
-	//lines := bytes.split(_diskstats, {'\n'}, allocator)
 	lines := bytes.split_multi(_diskstats, {{'\n'}, {'\r'}}, skip_empty = true, allocator = allocator)
 	split := make([][][]byte, len(lines), allocator)
 	for line, l in lines {
@@ -400,7 +396,6 @@ print_df_usage :: proc(diskstats: []byte, allocator: runtime.Allocator) {
 print_package_usage :: proc (diskstats: []byte, pkg: string, allocator: runtime.Allocator) {
 	title := [2]afmt.Column(afmt.ANSI24) {{17, .LEFT, title}, {20, .LEFT, title}}
 	cols  := [3]afmt.Column(afmt.ANSI24) {{17, .LEFT, label}, {10, .RIGHT, data}, {10, .RIGHT, data}}
-	//lines := bytes.split(diskstats, {'\n'}, allocator)
 	lines := bytes.split_multi(diskstats, {{'\n'}, {'\r'}}, skip_empty = true, allocator = allocator)
 
 	app_index := -1
